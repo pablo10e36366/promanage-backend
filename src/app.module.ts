@@ -28,7 +28,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
       type: 'postgres',
       url: process.env.DATABASE_URL,    // ⚡ Railway connection
       entities: [User, Role, Project],  // ✔ Tus entidades explícitas
-      synchronize: false,               // ✔ Correcto para producción
+      synchronize: true,               // ✔ Correcto para producción
     }),
 
     AuthModule,
