@@ -21,7 +21,7 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
   imports: [
     TypeOrmModule.forRoot({
       type: 'postgres',
-      url: 'postgresql://postgres:URyWUkVXwQXDZGHaJoGfzEouKJfajhZx@postgres.railway.internal:5432/railway',
+      url: process.env.DATABASE_URL,
       port: 5432,
       username: 'postgres',
       password: 'URyWUkVXwQXDZGHaJoGfzEouKJfajhZx',
