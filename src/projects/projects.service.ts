@@ -9,14 +9,25 @@ export class ProjectsService {
   constructor(
     @InjectRepository(Project)
     private readonly projectsRepo: Repository<Project>,
+
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
   ) {}
 
-  // Crear un proyecto (por si lo usas desde un controller de creación)
+  // Crear un proyecto para un usuario (usando su ID)
   async createForUser(
-    user: User,
+    userId: number,
     title: string,
     description?: string,
   ): Promise<Project> {
+    const user = await this.usersRepo.findOne({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new Error(`No se encontró el usuario con id ${userId}`);
+    }
+
     const project = this.projectsRepo.create({
       title,
       description,
@@ -46,9 +57,15 @@ export class ProjectsService {
   // 🔹 Usado por @Get('resumen') -> admin y colaborador
   async getResumen() {
     const total = await this.projectsRepo.count();
-    const activos = await this.projectsRepo.count({ where: { status: 'activo' } });
-    const completados = await this.projectsRepo.count({ where: { status: 'completado' } });
-    const archivados = await this.projectsRepo.count({ where: { status: 'archivado' } });
+    const activos = await this.projectsRepo.count({
+      where: { status: 'activo' },
+    });
+    const completados = await this.projectsRepo.count({
+      where: { status: 'completado' },
+    });
+    const archivados = await this.projectsRepo.count({
+      where: { status: 'archivado' },
+    });
 
     return {
       total,
