@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { APP_GUARD } from '@nestjs/core';
+import { ConfigModule } from '@nestjs/config';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -19,15 +20,15 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+
     TypeOrmModule.forRoot({
       type: 'postgres',
-      url: process.env.DATABASE_URL,
-      port: 5432,
-      username: 'postgres',
-      password: 'URyWUkVXwQXDZGHaJoGfzEouKJfajhZx',
-      database: 'railway',
-      entities: [User, Role, Project],
-      synchronize: false,
+      url: process.env.DATABASE_URL,    // ⚡ Railway connection
+      entities: [User, Role, Project],  // ✔ Tus entidades explícitas
+      synchronize: false,               // ✔ Correcto para producción
     }),
 
     AuthModule,
@@ -38,14 +39,10 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
   controllers: [AppController],
   providers: [
     AppService,
-
-    // 🔐 1. Guard global JWT (Obligatorio)
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
-
-    // 🛡️ 2. Guard global Roles (Depende del JWT)
     {
       provide: APP_GUARD,
       useClass: RolesGuard,
