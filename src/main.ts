@@ -3,8 +3,13 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  
   app.enableCors(); // para que luego Angular pueda llamar a la API
-  await app.listen(3000);
-  console.log('API Promanage escuchando en http://localhost:3000');
+
+  const port = process.env.PORT || 3000; // 👈 Railway asigna este puerto automáticamente
+
+  await app.listen(port, '0.0.0.0'); // 👈 Obligatorio para permitir conexiones externas
+
+  console.log(`API Promanage escuchando en el puerto ${port}`);
 }
 bootstrap();
