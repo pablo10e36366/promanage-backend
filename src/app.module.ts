@@ -1,45 +1,93 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { APP_GUARD } from '@nestjs/core';
-import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+
+import { validateConfig } from './config';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-
-import { User } from './users/user.entity';
-import { Role } from './roles/roles.entity';
-import { Project } from './projects/project.entity';
 
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { RolesModule } from './roles/roles.module';
 import { ProjectsModule } from './projects/projects.module';
+import { MilestonesModule } from './milestones/milestones.module';
+import { EvidencesModule } from './evidences/evidences.module';
+import { AssignmentsModule } from './assignments/assignments.module';
+import { ActivityModule } from './activity/activity.module';
+import { CollaborativeModule } from './collaborative/collaborative.module';
 
-import { RolesGuard } from './roles/roles.guard';
-import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { RemindersModule } from './reminders/reminders.module';
+import { PreviewModule } from './preview/preview.module';
+import { RadarModule } from './radar/radar.module';
+import { ReviewsModule } from './reviews/reviews.module';
+import { VersionsModule } from './versions/versions.module';
+import { MessagesModule } from './messages/messages.module';
+import { AdminModule } from './admin/admin.module';
+  import { ProjectAccessModule } from './project-access/project-access.module';
+  import { TeacherModule } from './teacher/teacher.module';
+  import { StudentModule } from './student/student.module';
+
+import { RolesGuard } from './roles/presentation/guards/roles.guard';
+import { JwtAuthGuard } from './auth/presentation/guards/jwt-auth.guard';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: '.env',
+      validate: validateConfig,
     }),
 
-   TypeOrmModule.forRoot({
-      type: 'postgres',
-      host: process.env.DB_HOST,
-      port: Number(process.env.DB_PORT),
-      username: process.env.DB_USERNAME,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      autoLoadEntities: true,
-      synchronize: true, // ⚠️ solo en desarrollo
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const password = config.getOrThrow<string>('DB_PASSWORD');
+        // console.log('DB_PASSWORD type:', typeof password, 'value:', password);
+        // Asegurar que password sea string
+        const passwordString = String(password);
+        const dbConfig = {
+          type: 'postgres' as const,
+          host: config.getOrThrow<string>('DB_HOST'),
+          port: config.getOrThrow<number>('DB_PORT'),
+          username: config.getOrThrow<string>('DB_USERNAME'),
+          password: passwordString,
+          database: config.getOrThrow<string>('DB_NAME'),
+          autoLoadEntities: true,
+          synchronize: false, // ❌ PROHIBIDO en producción, migraciones obligatorias
+          migrations: ['dist/database/migrations/*.js'],
+          migrationsRun: config.get<string>('NODE_ENV') === 'production', // Ejecutar migraciones automáticamente en producción
+          logging: ['error'] as 'error'[], // Solo mostrar errores críticos
+          ssl: false, // Deshabilitar SSL para conexiones locales
+        };
+        // console.log('Database config:', { ...dbConfig, password: '***' });
+        return dbConfig;
+      },
     }),
-
 
     AuthModule,
     UsersModule,
     RolesModule,
     ProjectsModule,
+    MilestonesModule,
+    EvidencesModule,
+    AssignmentsModule,
+    ActivityModule,
+    CollaborativeModule,
+    AdminModule,
+
+    RemindersModule,
+    PreviewModule,
+    RadarModule,
+    ReviewsModule,
+    VersionsModule,
+    MessagesModule,
+    ProjectAccessModule,
+    TeacherModule,
+    StudentModule,
   ],
   controllers: [AppController],
   providers: [
@@ -52,7 +100,10 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
       provide: APP_GUARD,
       useClass: RolesGuard,
     },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: LoggingInterceptor,
+    },
   ],
 })
-export class AppModule {}
-
+export class AppModule { }

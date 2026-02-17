@@ -1,0 +1,11 @@
+import { IsIn, IsOptional, IsString } from 'class-validator';
+
+export class ResolveAccessRequestDto {
+  @IsString()
+  @IsIn(['APPROVE', 'REJECT'])
+  decision: 'APPROVE' | 'REJECT';
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
