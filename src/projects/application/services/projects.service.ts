@@ -32,8 +32,61 @@ export class ProjectsService {
   constructor(
     @InjectRepository(Project)
     private readonly projectsRepo: Repository<Project>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
     private readonly activityService: ActivityService,
   ) {}
+
+  private getTokenRoleName(user: User): string {
+    const rawRole = (user as unknown as { role?: unknown })?.role;
+    if (typeof rawRole === 'string') {
+      return rawRole.toLowerCase();
+    }
+
+    if (
+      rawRole &&
+      typeof rawRole === 'object' &&
+      'name' in rawRole &&
+      typeof (rawRole as { name?: unknown }).name === 'string'
+    ) {
+      return ((rawRole as { name: string }).name || '').toLowerCase();
+    }
+
+    return '';
+  }
+
+  private async resolveRoleNames(user: User): Promise<Set<string>> {
+    const roles = new Set<string>();
+    const tokenRole = this.getTokenRoleName(user);
+    if (tokenRole) roles.add(tokenRole);
+
+    const userId = Number((user as unknown as { id?: number | string })?.id);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return roles;
+    }
+
+    try {
+      const dbUser = await this.usersRepo.findOne({
+        where: { id: userId },
+        relations: ['role'],
+      });
+      const dbRole = dbUser?.role?.name ? String(dbUser.role.name).toLowerCase() : '';
+      if (dbRole) roles.add(dbRole);
+      return roles;
+    } catch {
+      return roles;
+    }
+  }
+
+  private async isAdminUser(user: User): Promise<boolean> {
+    const roles = await this.resolveRoleNames(user);
+    return roles.has('admin');
+  }
+
+  private async hasRepositoryReadAccess(user: User): Promise<boolean> {
+    const roles = await this.resolveRoleNames(user);
+    return roles.has('admin') || roles.has('docente');
+  }
 
   /**
    * âœ… HARDENING: Valida que el usuario sea owner o admin
@@ -49,7 +102,7 @@ export class ProjectsService {
     }
 
     const isOwner = project.owner.id === user.id;
-    const isAdmin = user.role?.name === 'admin';
+    const isAdmin = await this.isAdminUser(user);
 
     if (!isOwner && !isAdmin) {
       throw new ForbiddenException('No tienes permiso para modificar este proyecto');
@@ -195,15 +248,16 @@ export class ProjectsService {
     });
     if (!project) throw new NotFoundException(`Proyecto con ID ${id} no encontrado`);
 
-    // Verificar permisos: solo admin o el propietario puede ver el repositorio
-    const isAdmin = user.role?.name === 'admin';
+    // Verificar permisos: owner, admin o docente pueden ver repositorio
+    const roles = await this.resolveRoleNames(user);
+    const hasReadAccess = roles.has('admin') || roles.has('docente');
     const isOwner = String(project.owner.id) === String(user.id);
 
     console.log(
-      `[RepoView] Project ${id} | Owner: ${project.owner.id} | User: ${user.id} | IsOwner: ${isOwner}`,
+      `[RepoView] Project ${id} | Owner: ${project.owner.id} | User: ${user.id} | Roles: ${Array.from(roles).join('|') || 'none'} | IsOwner: ${isOwner} | HasReadAccess: ${hasReadAccess}`,
     );
 
-    if (!isAdmin && !isOwner) {
+    if (!hasReadAccess && !isOwner) {
       throw new ForbiddenException('No tienes permiso para acceder a este proyecto');
     }
 
