@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { RefreshToken } from '../../../auth/infrastructure/entities/refresh-token.entity';
+import { AssignmentStatus } from '../../../assignments/domain/assignment-status';
+import { Assignment } from '../../../assignments/infrastructure/entities/assignment.entity';
 import {
   AccessStatus,
   ProjectAccess,
@@ -15,6 +17,8 @@ export class StudentNotificationsService {
   constructor(
     @InjectRepository(RefreshToken)
     private readonly refreshTokensRepo: Repository<RefreshToken>,
+    @InjectRepository(Assignment)
+    private readonly assignmentsRepo: Repository<Assignment>,
     @InjectRepository(ProjectAccess)
     private readonly accessRepo: Repository<ProjectAccess>,
     @InjectRepository(ActivityFeedEvent)
@@ -50,15 +54,40 @@ export class StudentNotificationsService {
       .getRawMany<{ course_id: string }>();
 
     const courseIds = courseIdsRows.map((r) => r.course_id).filter(Boolean);
+    const deliveredMilestoneIds = courseIds.length
+      ? (
+          await this.assignmentsRepo
+            .createQueryBuilder('a')
+            .select('DISTINCT a.milestoneId', 'milestone_id')
+            .where('a.studentId = :studentId', { studentId: params.studentId })
+            .andWhere('a.projectId IN (:...courseIds)', { courseIds })
+            .andWhere('a.milestoneId IS NOT NULL')
+            .andWhere('a.status IN (:...deliveredStates)', {
+              deliveredStates: [AssignmentStatus.ENTREGADO, AssignmentStatus.REVISADO],
+            })
+            .getRawMany<{ milestone_id: string | null }>()
+        )
+          .map((r) => r.milestone_id)
+          .filter((id): id is string => !!id)
+      : [];
 
     const [uploadsTotal, deliveriesTotal, loginsTotal] = await Promise.all([
-      courseIds.length
-        ? this.feedRepo
-            .createQueryBuilder('e')
-            .where('e.type = :type', { type: 'announcement_created' })
-            .andWhere('e.courseId IN (:...courseIds)', { courseIds })
-            .getCount()
-        : Promise.resolve(0),
+      (async () => {
+        if (!courseIds.length) return 0;
+        const qb = this.feedRepo
+          .createQueryBuilder('e')
+          .where('e.type = :type', { type: 'announcement_created' })
+          .andWhere('e.courseId IN (:...courseIds)', { courseIds });
+
+        if (deliveredMilestoneIds.length) {
+          qb.andWhere(
+            `(e.metadata->>'milestoneId' IS NULL OR e.metadata->>'milestoneId' NOT IN (:...deliveredMilestoneIds))`,
+            { deliveredMilestoneIds },
+          );
+        }
+
+        return qb.getCount();
+      })(),
       courseIds.length
         ? this.feedRepo
             .createQueryBuilder('e')
@@ -72,32 +101,42 @@ export class StudentNotificationsService {
     ]);
 
     const [uploads, deliveries, logins] = await Promise.all([
-      courseIds.length
-        ? this.feedRepo
-            .createQueryBuilder('e')
-            .innerJoin(Project, 'c', 'c.id = e.courseId')
-            .select([
-              'e.id AS id',
-              'e.type AS type',
-              'e.actorName AS actor_name',
-              'e.courseId AS course_id',
-              'c.title AS course_name',
-              'e.title AS title',
-              'e.createdAt AS created_at',
-            ])
-            .where('e.type = :type', { type: 'announcement_created' })
-            .andWhere('e.courseId IN (:...courseIds)', { courseIds })
-            .orderBy('e.createdAt', 'DESC')
-            .take(limit)
-            .getRawMany<{
-              id: string;
-              actor_name: string | null;
-              course_id: string;
-              course_name: string | null;
-              title: string | null;
-              created_at: Date | string;
-            }>()
-        : Promise.resolve([]),
+      (async () => {
+        if (!courseIds.length) return [];
+        const qb = this.feedRepo
+          .createQueryBuilder('e')
+          .innerJoin(Project, 'c', 'c.id = e.courseId')
+          .select([
+            'e.id AS id',
+            'e.type AS type',
+            'e.actorName AS actor_name',
+            'e.courseId AS course_id',
+            'c.title AS course_name',
+            'e.title AS title',
+            'e.createdAt AS created_at',
+          ])
+          .where('e.type = :type', { type: 'announcement_created' })
+          .andWhere('e.courseId IN (:...courseIds)', { courseIds });
+
+        if (deliveredMilestoneIds.length) {
+          qb.andWhere(
+            `(e.metadata->>'milestoneId' IS NULL OR e.metadata->>'milestoneId' NOT IN (:...deliveredMilestoneIds))`,
+            { deliveredMilestoneIds },
+          );
+        }
+
+        return qb
+          .orderBy('e.createdAt', 'DESC')
+          .take(limit)
+          .getRawMany<{
+            id: string;
+            actor_name: string | null;
+            course_id: string;
+            course_name: string | null;
+            title: string | null;
+            created_at: Date | string;
+          }>();
+      })(),
       courseIds.length
         ? this.feedRepo
             .createQueryBuilder('e')

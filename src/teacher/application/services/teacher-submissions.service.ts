@@ -21,6 +21,22 @@ function iso(date: Date | null | undefined): string | null {
   return date ? new Date(date).toISOString() : null;
 }
 
+const ACCENTED_CHARS = 'áàäâãéèëêíìïîóòöôõúùüûñç';
+const UNACCENTED_CHARS = 'aaaaaeeeeiiiiooooouuuunc';
+
+function normalizeSearchTerm(value: string): string {
+  return (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizedSql(expr: string): string {
+  return `REGEXP_REPLACE(TRANSLATE(LOWER(COALESCE(${expr}, '')), '${ACCENTED_CHARS}', '${UNACCENTED_CHARS}'), '\\s+', ' ', 'g')`;
+}
+
 @Injectable()
 export class TeacherSubmissionsService {
   constructor(
@@ -47,6 +63,7 @@ export class TeacherSubmissionsService {
     const pageSize = query.page_size ?? 10;
     const status = query.status ?? 'pending';
     const sort = query.sort ?? 'priority_desc';
+    const includeUnsubmitted = query.include_unsubmitted === true;
 
     const qb = this.assignmentsRepo
       .createQueryBuilder('s')
@@ -54,6 +71,9 @@ export class TeacherSubmissionsService {
       .innerJoin('course.owner', 'teacher')
       .innerJoinAndSelect('s.student', 'student')
       .leftJoinAndSelect('s.evidence', 'evidence')
+      .leftJoinAndSelect('evidence.parent', 'evidenceParent')
+      .leftJoinAndSelect('evidence.milestone', 'evidenceMilestone')
+      .leftJoinAndSelect('s.milestone', 'milestone')
       .where('teacher.id = :teacherId', { teacherId });
 
     if (query.course_id) {
@@ -63,15 +83,28 @@ export class TeacherSubmissionsService {
       qb.andWhere('student.id = :studentId', { studentId: query.student_id });
     }
     if (query.q) {
-      const q = `%${query.q.toLowerCase()}%`;
+      const rawTerm = query.q.trim().toLowerCase();
+      const normalizedTerm = normalizeSearchTerm(query.q);
+      const q = `%${rawTerm}%`;
+      const q_norm = `%${normalizedTerm}%`;
       qb.andWhere(
         `(
           LOWER(student.name) LIKE :q OR
           LOWER(student.email) LIKE :q OR
           LOWER(course.title) LIKE :q OR
-          LOWER(COALESCE(evidence.title, '')) LIKE :q
+          LOWER(COALESCE(evidence.title, '')) LIKE :q OR
+          LOWER(COALESCE(evidenceParent.title, '')) LIKE :q OR
+          LOWER(COALESCE(milestone.title, '')) LIKE :q OR
+          LOWER(COALESCE(evidenceMilestone.title, '')) LIKE :q OR
+          ${normalizedSql('student.name')} LIKE :q_norm OR
+          ${normalizedSql('student.email')} LIKE :q_norm OR
+          ${normalizedSql('course.title')} LIKE :q_norm OR
+          ${normalizedSql('evidence.title')} LIKE :q_norm OR
+          ${normalizedSql('evidenceParent.title')} LIKE :q_norm OR
+          ${normalizedSql('milestone.title')} LIKE :q_norm OR
+          ${normalizedSql('evidenceMilestone.title')} LIKE :q_norm
         )`,
-        { q },
+        { q, q_norm },
       );
     }
 
@@ -86,7 +119,9 @@ export class TeacherSubmissionsService {
       qb.andWhere('s.reviewOutcome = :out', { out: 'CHANGES_REQUESTED' });
     } else if (status === 'all') {
       // Exclude drafts that are not submitted by default
-      qb.andWhere('s.status IN (:...allowed)', { allowed: ['ENTREGADO', 'REVISADO'] });
+      qb.andWhere('s.status IN (:...allowed)', {
+        allowed: includeUnsubmitted ? ['PENDIENTE', 'ENTREGADO', 'REVISADO'] : ['ENTREGADO', 'REVISADO'],
+      });
     }
 
     const priorityExpr = `
@@ -132,13 +167,16 @@ export class TeacherSubmissionsService {
       const priority: UnifiedPriority = priorityRank >= 3 ? 'high' : priorityRank === 2 ? 'medium' : 'low';
 
       const normalizedStatus =
-        s.status === 'ENTREGADO'
+        s.status === 'PENDIENTE' || s.status === 'ENTREGADO'
           ? 'pending'
           : s.reviewOutcome === 'CHANGES_REQUESTED'
           ? 'changes_requested'
           : 'approved';
 
       const title = s.evidence?.title || 'Evidencia';
+      const milestoneRef = (s.milestone as any) || (s.evidence as any)?.milestone || null;
+      const milestoneTitle =
+        milestoneRef?.title || (s.evidence as any)?.parent?.title || null;
 
       return {
         id: s.id,
@@ -148,6 +186,8 @@ export class TeacherSubmissionsService {
         student_name: (s.student as any)?.name || '',
         student_email: (s.student as any)?.email || '',
         title,
+        milestone_id: s.milestoneId || milestoneRef?.id || null,
+        milestone_title: milestoneTitle,
         status: normalizedStatus,
         priority,
         created_at: iso(s.createdAt),
@@ -171,18 +211,34 @@ export class TeacherSubmissionsService {
       if (query.course_id) nextQb.andWhere('course.id = :courseId', { courseId: query.course_id });
       if (query.student_id) nextQb.andWhere('s.studentId = :studentId', { studentId: query.student_id });
       if (query.q) {
-        const q = `%${query.q.toLowerCase()}%`;
+        const rawTerm = query.q.trim().toLowerCase();
+        const normalizedTerm = normalizeSearchTerm(query.q);
+        const q = `%${rawTerm}%`;
+        const q_norm = `%${normalizedTerm}%`;
         nextQb
           .innerJoin('s.student', 'student')
           .leftJoin('s.evidence', 'evidence')
+          .leftJoin('evidence.parent', 'evidenceParent')
+          .leftJoin('evidence.milestone', 'evidenceMilestone')
+          .leftJoin('s.milestone', 'milestone')
           .andWhere(
             `(
               LOWER(student.name) LIKE :q OR
               LOWER(student.email) LIKE :q OR
               LOWER(course.title) LIKE :q OR
-              LOWER(COALESCE(evidence.title, '')) LIKE :q
+              LOWER(COALESCE(evidence.title, '')) LIKE :q OR
+              LOWER(COALESCE(evidenceParent.title, '')) LIKE :q OR
+              LOWER(COALESCE(milestone.title, '')) LIKE :q OR
+              LOWER(COALESCE(evidenceMilestone.title, '')) LIKE :q OR
+              ${normalizedSql('student.name')} LIKE :q_norm OR
+              ${normalizedSql('student.email')} LIKE :q_norm OR
+              ${normalizedSql('course.title')} LIKE :q_norm OR
+              ${normalizedSql('evidence.title')} LIKE :q_norm OR
+              ${normalizedSql('evidenceParent.title')} LIKE :q_norm OR
+              ${normalizedSql('milestone.title')} LIKE :q_norm OR
+              ${normalizedSql('evidenceMilestone.title')} LIKE :q_norm
             )`,
-            { q },
+            { q, q_norm },
           );
       }
       // We need a stable "next" according to the current filters and priority.
@@ -468,10 +524,21 @@ export class TeacherSubmissionsService {
     if (q) {
       params.push(`%${q}%`);
       const idx = params.length;
+      params.push(`%${normalizeSearchTerm(q)}%`);
+      const idxNorm = params.length;
       where += ` AND (
         LOWER(student.name) LIKE $${idx} OR
         LOWER(student.email) LIKE $${idx} OR
-        LOWER(p.title) LIKE $${idx}
+        LOWER(p.title) LIKE $${idx} OR
+        LOWER(COALESCE(e.title, '')) LIKE $${idx} OR
+        LOWER(COALESCE(ep.title, '')) LIKE $${idx} OR
+        LOWER(COALESCE(m.title, '')) LIKE $${idx} OR
+        REGEXP_REPLACE(TRANSLATE(LOWER(COALESCE(student.name, '')), '${ACCENTED_CHARS}', '${UNACCENTED_CHARS}'), '\\s+', ' ', 'g') LIKE $${idxNorm} OR
+        REGEXP_REPLACE(TRANSLATE(LOWER(COALESCE(student.email, '')), '${ACCENTED_CHARS}', '${UNACCENTED_CHARS}'), '\\s+', ' ', 'g') LIKE $${idxNorm} OR
+        REGEXP_REPLACE(TRANSLATE(LOWER(COALESCE(p.title, '')), '${ACCENTED_CHARS}', '${UNACCENTED_CHARS}'), '\\s+', ' ', 'g') LIKE $${idxNorm} OR
+        REGEXP_REPLACE(TRANSLATE(LOWER(COALESCE(e.title, '')), '${ACCENTED_CHARS}', '${UNACCENTED_CHARS}'), '\\s+', ' ', 'g') LIKE $${idxNorm} OR
+        REGEXP_REPLACE(TRANSLATE(LOWER(COALESCE(ep.title, '')), '${ACCENTED_CHARS}', '${UNACCENTED_CHARS}'), '\\s+', ' ', 'g') LIKE $${idxNorm} OR
+        REGEXP_REPLACE(TRANSLATE(LOWER(COALESCE(m.title, '')), '${ACCENTED_CHARS}', '${UNACCENTED_CHARS}'), '\\s+', ' ', 'g') LIKE $${idxNorm}
       )`;
     }
 
@@ -491,6 +558,9 @@ export class TeacherSubmissionsService {
         FROM assignments s
         JOIN projects p ON p.id = s."projectId"
         JOIN users student ON student.id = s."studentId"
+        LEFT JOIN evidences e ON e.id = s."evidenceId"
+        LEFT JOIN milestones m ON m.id = COALESCE(s."milestoneId", e."milestoneId")
+        LEFT JOIN evidences ep ON ep.id = e."parentId"
         WHERE ${where}
       ),
       ordered AS (

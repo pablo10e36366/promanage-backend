@@ -9,10 +9,11 @@ export const databaseConfigSchema = z.object({
   DB_SSL: z
     .string()
     .optional()
-    .transform((val) => val === 'true' || val === '1'),
+    .default('false')
+    .transform((val) => ['true', '1', 'yes'].includes(val.toLowerCase())),
 });
 
 export type DatabaseConfig = z.infer<typeof databaseConfigSchema>;
 
-// La configuraciÃ³n se valida a travÃ©s de validateConfig en ConfigModule
+// La configuración se valida a través de validateConfig en ConfigModule.
 // export const databaseConfig = databaseConfigSchema.parse(process.env);

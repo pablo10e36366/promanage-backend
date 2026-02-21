@@ -1,5 +1,5 @@
-import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 
 export class TeacherSubmissionsQueryDto {
   @IsOptional()
@@ -38,4 +38,9 @@ export class TeacherSubmissionsQueryDto {
   @IsString()
   @IsIn(['created_at_desc', 'created_at_asc', 'priority_desc'])
   sort?: string = 'priority_desc';
+
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1 || value === '1')
+  @IsBoolean()
+  include_unsubmitted?: boolean = false;
 }

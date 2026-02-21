@@ -17,7 +17,6 @@ import { EvidencesModule } from './evidences/evidences.module';
 import { AssignmentsModule } from './assignments/assignments.module';
 import { ActivityModule } from './activity/activity.module';
 import { CollaborativeModule } from './collaborative/collaborative.module';
-
 import { RemindersModule } from './reminders/reminders.module';
 import { PreviewModule } from './preview/preview.module';
 import { RadarModule } from './radar/radar.module';
@@ -25,9 +24,9 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { VersionsModule } from './versions/versions.module';
 import { MessagesModule } from './messages/messages.module';
 import { AdminModule } from './admin/admin.module';
-  import { ProjectAccessModule } from './project-access/project-access.module';
-  import { TeacherModule } from './teacher/teacher.module';
-  import { StudentModule } from './student/student.module';
+import { ProjectAccessModule } from './project-access/project-access.module';
+import { TeacherModule } from './teacher/teacher.module';
+import { StudentModule } from './student/student.module';
 
 import { RolesGuard } from './roles/presentation/guards/roles.guard';
 import { JwtAuthGuard } from './auth/presentation/guards/jwt-auth.guard';
@@ -45,26 +44,22 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const password = config.getOrThrow<string>('DB_PASSWORD');
-        // console.log('DB_PASSWORD type:', typeof password, 'value:', password);
-        // Asegurar que password sea string
-        const passwordString = String(password);
-        const dbConfig = {
+        const dbSsl = config.get<boolean>('DB_SSL', false);
+
+        return {
           type: 'postgres' as const,
           host: config.getOrThrow<string>('DB_HOST'),
           port: config.getOrThrow<number>('DB_PORT'),
           username: config.getOrThrow<string>('DB_USERNAME'),
-          password: passwordString,
+          password: config.getOrThrow<string>('DB_PASSWORD'),
           database: config.getOrThrow<string>('DB_NAME'),
           autoLoadEntities: true,
-          synchronize: false, // ❌ PROHIBIDO en producción, migraciones obligatorias
+          synchronize: false,
           migrations: ['dist/database/migrations/*.js'],
-          migrationsRun: config.get<string>('NODE_ENV') === 'production', // Ejecutar migraciones automáticamente en producción
-          logging: ['error'] as 'error'[], // Solo mostrar errores críticos
-          ssl: false, // Deshabilitar SSL para conexiones locales
+          migrationsRun: config.get<string>('NODE_ENV') === 'production',
+          logging: ['error'] as 'error'[],
+          ssl: dbSsl ? { rejectUnauthorized: false } : false,
         };
-        // console.log('Database config:', { ...dbConfig, password: '***' });
-        return dbConfig;
       },
     }),
 
@@ -78,7 +73,6 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     ActivityModule,
     CollaborativeModule,
     AdminModule,
-
     RemindersModule,
     PreviewModule,
     RadarModule,
@@ -106,4 +100,4 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     },
   ],
 })
-export class AppModule { }
+export class AppModule {}

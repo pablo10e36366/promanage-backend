@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { AssignmentStatus } from '../../../assignments/domain/assignment-status';
+import { Assignment } from '../../../assignments/infrastructure/entities/assignment.entity';
 import { Project } from '../../../projects/infrastructure/entities/project.entity';
 import { RefreshToken } from '../../../auth/infrastructure/entities/refresh-token.entity';
 import {
@@ -81,9 +83,13 @@ export class TeacherNotificationsService {
     const limit = Math.min(500, page * pageSize);
 
     const [submissionsTotal, joinRequestsTotalRows, loginsTotal] = await Promise.all([
-      this.feedRepo.count({
-        where: { teacherId: params.teacherId, type: 'submission_created' as any } as any,
-      }),
+      this.feedRepo
+        .createQueryBuilder('e')
+        .innerJoin(Assignment, 'a', 'a.id = e.entityId')
+        .where('e.teacherId = :teacherId', { teacherId: params.teacherId })
+        .andWhere('e.type = :type', { type: 'submission_created' })
+        .andWhere('a.status = :pendingReviewStatus', { pendingReviewStatus: AssignmentStatus.ENTREGADO })
+        .getCount(),
       this.accessRepo.query(
         `
           SELECT COUNT(*)::int AS cnt
@@ -101,6 +107,7 @@ export class TeacherNotificationsService {
     const [events, joinRequests, logins] = await Promise.all([
       this.feedRepo
         .createQueryBuilder('e')
+        .innerJoin(Assignment, 'a', 'a.id = e.entityId')
         .innerJoin(Project, 'c', 'c.id = e.courseId')
         .select([
           'e.id AS id',
@@ -114,6 +121,7 @@ export class TeacherNotificationsService {
         ])
         .where('e.teacherId = :teacherId', { teacherId: params.teacherId })
         .andWhere('e.type = :type', { type: 'submission_created' })
+        .andWhere('a.status = :pendingReviewStatus', { pendingReviewStatus: AssignmentStatus.ENTREGADO })
         .orderBy('e.createdAt', 'DESC')
         .take(limit)
         .getRawMany<{
