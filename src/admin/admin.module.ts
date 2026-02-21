@@ -22,10 +22,13 @@ import { DeleteCourseUseCase } from './application/use-cases/delete-course.use-c
 import { ListAccessRequestsUseCase } from './application/use-cases/list-access-requests.use-case';
 import { ResolveAccessRequestUseCase } from './application/use-cases/resolve-access-request.use-case';
 import { ProjectAccess } from '../project-access/infrastructure/entities/project-access.entity';
+import { RoleUpgradeRequest } from '../users/infrastructure/entities/role-upgrade-request.entity';
+import { ListRoleUpgradeRequestsUseCase } from './application/use-cases/list-role-upgrade-requests.use-case';
+import { ResolveRoleUpgradeRequestUseCase } from './application/use-cases/resolve-role-upgrade-request.use-case';
 
 @Module({
     imports: [
-        TypeOrmModule.forFeature([User, Role, SystemSettings, Project, Review, ProjectAccess]),
+        TypeOrmModule.forFeature([User, Role, SystemSettings, Project, Review, ProjectAccess, RoleUpgradeRequest]),
         ActivityModule,
     ],
     controllers: [AdminController],
@@ -44,6 +47,8 @@ import { ProjectAccess } from '../project-access/infrastructure/entities/project
         DeleteCourseUseCase,
         ListAccessRequestsUseCase,
         ResolveAccessRequestUseCase,
+        ListRoleUpgradeRequestsUseCase,
+        ResolveRoleUpgradeRequestUseCase,
     ],
     exports: [AdminService, AdminFacadeService],
 })

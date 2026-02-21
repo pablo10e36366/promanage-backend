@@ -9,8 +9,8 @@ import { User } from '../users/infrastructure/entities/user.entity';
 import { Role } from '../roles/infrastructure/entities/role.entity';
 import { RefreshToken } from './infrastructure/entities/refresh-token.entity';
 import { EmailOtp } from './infrastructure/entities/email-otp.entity';
+import { PendingRegistration } from './infrastructure/entities/pending-registration.entity';
 import { MailService } from '../mail/application/services/mail.service';
-import { RoleType } from '../roles/domain/permissions';
 
 jest.mock('bcrypt');
 
@@ -44,12 +44,21 @@ describe('AuthService', () => {
     update: jest.fn(),
   };
 
+  const pendingRegistrationRepo = {
+    findOne: jest.fn(),
+    create: jest.fn((value) => value),
+    merge: jest.fn((_, value) => value),
+    save: jest.fn(async (value) => value),
+    update: jest.fn(),
+  };
+
   const jwtService = {
     sign: jest.fn(() => 'access.jwt.token'),
   };
 
   const mailService = {
     sendGoogleOtpEmail: jest.fn(),
+    sendRegistrationVerificationEmail: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -62,6 +71,7 @@ describe('AuthService', () => {
         { provide: getRepositoryToken(RefreshToken), useValue: refreshTokensRepo },
         { provide: getRepositoryToken(Role), useValue: roleRepo },
         { provide: getRepositoryToken(EmailOtp), useValue: emailOtpRepo },
+        { provide: getRepositoryToken(PendingRegistration), useValue: pendingRegistrationRepo },
         { provide: JwtService, useValue: jwtService },
         { provide: MailService, useValue: mailService },
       ],
@@ -73,24 +83,10 @@ describe('AuthService', () => {
   describe('register', () => {
     it('crea usuario colaborador cuando email no existe', async () => {
       userRepo.findOne.mockResolvedValueOnce(null);
-      roleRepo.findOne.mockResolvedValueOnce({
-        id: 3,
-        name: RoleType.STUDENT,
-      });
-      (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-pass');
-      userRepo.create.mockReturnValue({
-        id: 7,
-        name: 'Nuevo',
-        email: 'nuevo@gmail.com',
-        password: 'hashed-pass',
-        role: { id: 3, name: RoleType.STUDENT },
-      });
-      userRepo.save.mockResolvedValue({
-        id: 7,
-        name: 'Nuevo',
-        email: 'nuevo@gmail.com',
-        role: { id: 3, name: RoleType.STUDENT },
-      });
+      pendingRegistrationRepo.findOne.mockResolvedValueOnce(null);
+      (bcrypt.hash as jest.Mock)
+        .mockResolvedValueOnce('hashed-pass')
+        .mockResolvedValueOnce('hashed-code');
 
       const result = await service.register({
         name: 'Nuevo',
@@ -99,13 +95,12 @@ describe('AuthService', () => {
       });
 
       expect(result).toEqual({
-        id: 7,
-        name: 'Nuevo',
-        email: 'nuevo@gmail.com',
-        role: RoleType.STUDENT,
+        success: true,
+        message: 'Revisa tu correo e ingresa el PIN de 6 digitos para activar tu cuenta',
+        expires_in_seconds: 86400,
       });
-      expect(userRepo.create).toHaveBeenCalled();
-      expect(userRepo.save).toHaveBeenCalled();
+      expect(pendingRegistrationRepo.save).toHaveBeenCalled();
+      expect(mailService.sendRegistrationVerificationEmail).toHaveBeenCalled();
     });
 
     it('lanza ConflictException cuando email ya existe', async () => {

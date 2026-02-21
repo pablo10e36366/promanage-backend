@@ -7,13 +7,16 @@ export class MailService {
   private transporter: nodemailer.Transporter;
 
   constructor(private configService: ConfigService) {
+    const rawMailPass = this.configService.get<string>('MAIL_PASS') || '';
+    const normalizedMailPass = rawMailPass.replace(/\s+/g, '');
+
     this.transporter = nodemailer.createTransport({
       host: this.configService.get<string>('MAIL_HOST', 'smtp.gmail.com'),
       port: this.configService.get<number>('MAIL_PORT', 587),
       secure: false,
       auth: {
         user: this.configService.get<string>('MAIL_USER'),
-        pass: this.configService.get<string>('MAIL_PASS'),
+        pass: normalizedMailPass,
       },
     });
   }
@@ -25,7 +28,7 @@ export class MailService {
     );
 
     const mailUser = this.configService.get<string>('MAIL_USER');
-    const mailPass = this.configService.get<string>('MAIL_PASS');
+    const mailPass = (this.configService.get<string>('MAIL_PASS') || '').replace(/\s+/g, '');
 
     if (!mailUser || !mailPass) {
       console.warn(
@@ -70,6 +73,70 @@ export class MailService {
       from: mailFrom,
       to: email,
       subject: 'Tu código de verificación ProManage',
+      html: htmlContent,
+    });
+  }
+
+  async sendRegistrationVerificationEmail(
+    email: string,
+    name: string,
+    code: string,
+  ): Promise<void> {
+    const mailFrom = this.configService.get<string>(
+      'MAIL_FROM',
+      'ProManage <noreply@promanage.com>',
+    );
+
+    const mailUser = this.configService.get<string>('MAIL_USER');
+    const mailPass = (this.configService.get<string>('MAIL_PASS') || '').replace(/\s+/g, '');
+
+    if (!mailUser || !mailPass) {
+      console.warn(
+        `[DEV] Verificacion de registro para ${email}. Codigo: ${code}`,
+      );
+      return;
+    }
+
+    const safeName = (name || '').trim() || 'Usuario';
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="margin:0;padding:0;background:#f4f4f4;font-family:Arial,sans-serif;">
+          <div style="max-width:600px;margin:40px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 10px rgba(0,0,0,0.08);">
+            <div style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:28px 24px;color:#fff;">
+              <h1 style="margin:0;font-size:22px;">Completa tu registro en ProManage</h1>
+              <p style="margin:8px 0 0;opacity:0.9;">Codigo de verificacion</p>
+            </div>
+            <div style="padding:24px;">
+              <p style="margin:0 0 14px;color:#334155;line-height:1.6;">
+                Hola <strong>${safeName}</strong>, para activar tu cuenta usa este codigo de verificacion:
+              </p>
+              <div style="font-size:32px;letter-spacing:10px;font-weight:800;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;text-align:center;">
+                ${code}
+              </div>
+              <p style="margin:16px 0 14px;color:#64748b;line-height:1.6;">
+                Ingresa este PIN en la pantalla de registro para finalizar la activacion.
+              </p>
+              <p style="margin:16px 0 0;color:#64748b;line-height:1.6;">
+                Este PIN expira en 24 horas.
+              </p>
+            </div>
+            <div style="padding:18px 24px;background:#f8fafc;color:#94a3b8;font-size:12px;text-align:center;">
+              ProManage
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    await this.transporter.sendMail({
+      from: mailFrom,
+      to: email,
+      subject: 'Confirma tu registro en ProManage',
       html: htmlContent,
     });
   }

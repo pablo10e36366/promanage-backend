@@ -10,6 +10,7 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 import { User } from '../../../users/infrastructure/entities/user.entity';
 import { Role } from '../../../roles/infrastructure/entities/role.entity';
+import { RoleType } from '../../../roles/domain/permissions';
 import { SystemSettings } from '../../../config/infrastructure/entities/system-settings.entity';
 import { Project, ProjectStatus } from '../../../projects/infrastructure/entities/project.entity';
 import { Review, ReviewStatus } from '../../../reviews/infrastructure/entities/review.entity';
@@ -19,6 +20,10 @@ import {
   AccessStatus,
   ProjectAccess,
 } from '../../../project-access/infrastructure/entities/project-access.entity';
+import {
+  RoleUpgradeRequest,
+  RoleUpgradeRequestStatus,
+} from '../../../users/infrastructure/entities/role-upgrade-request.entity';
 import * as bcrypt from 'bcrypt';
 import { ActivityService } from '../../../activity/application/services/activity.service';
 import { ActivityAction } from '../../../activity/infrastructure/entities/activity-log.entity';
@@ -39,6 +44,8 @@ interface ProjectCounters {
   completed: number;
 }
 
+type CanonicalAssignableRole = RoleType.ADMIN | RoleType.DOCENTE | RoleType.STUDENT;
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -54,6 +61,8 @@ export class AdminService {
     private readonly reviewRepo: Repository<Review>,
     @InjectRepository(ProjectAccess)
     private readonly projectAccessRepo: Repository<ProjectAccess>,
+    @InjectRepository(RoleUpgradeRequest)
+    private readonly roleUpgradeRequestRepo: Repository<RoleUpgradeRequest>,
     private readonly activityService: ActivityService,
   ) {}
 
@@ -66,6 +75,9 @@ export class AdminService {
     const role = await this.roleRepo.findOne({ where: { id: dto.roleId } });
     if (!role) {
       throw new BadRequestException('Invalid role ID');
+    }
+    if (!this.isAllowedAssignableRole(role.name)) {
+      throw new BadRequestException('Solo se permiten los roles Admin, Docente y Estudiante');
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
@@ -97,6 +109,9 @@ export class AdminService {
     const newRole = await this.roleRepo.findOne({ where: { id: dto.roleId } });
     if (!newRole) {
       throw new BadRequestException('Invalid role ID');
+    }
+    if (!this.isAllowedAssignableRole(newRole.name)) {
+      throw new BadRequestException('Solo se permiten los roles Admin, Docente y Estudiante');
     }
 
     const oldRole = user.role;
@@ -166,7 +181,32 @@ export class AdminService {
   }
 
   async findAllRoles(): Promise<Role[]> {
-    return this.roleRepo.createQueryBuilder('role').orderBy('role.id', 'ASC').getMany();
+    const roles = await this.roleRepo.createQueryBuilder('role').orderBy('role.id', 'ASC').getMany();
+    const byCanonical = new Map<CanonicalAssignableRole, Role>();
+
+    for (const role of roles) {
+      const canonical = this.normalizeRoleName(role.name);
+      if (!canonical) continue;
+
+      const current = byCanonical.get(canonical);
+      if (!current) {
+        byCanonical.set(canonical, role);
+        continue;
+      }
+
+      // Prefer exact canonical records (e.g. "docente" over aliases) and then lower ids.
+      const roleIsExact = String(role.name || '').toLowerCase() === canonical;
+      const currentIsExact = String(current.name || '').toLowerCase() === canonical;
+
+      if ((roleIsExact && !currentIsExact) || (roleIsExact === currentIsExact && role.id < current.id)) {
+        byCanonical.set(canonical, role);
+      }
+    }
+
+    const order: CanonicalAssignableRole[] = [RoleType.ADMIN, RoleType.DOCENTE, RoleType.STUDENT];
+    return order
+      .map((key) => byCanonical.get(key))
+      .filter((role): role is Role => !!role);
   }
 
   async getSettings(): Promise<SystemSettings> {
@@ -464,6 +504,116 @@ export class AdminService {
     });
 
     return saved;
+  }
+
+  async listRoleUpgradeRequests(filters?: {
+    status?: RoleUpgradeRequestStatus;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ items: RoleUpgradeRequest[]; total: number; page: number; page_size: number }> {
+    const page = Math.max(1, filters?.page || 1);
+    const pageSize = Math.max(1, Math.min(100, filters?.pageSize || 10));
+
+    const query = this.roleUpgradeRequestRepo
+      .createQueryBuilder('request')
+      .leftJoinAndSelect('request.user', 'user')
+      .leftJoinAndSelect('request.reviewedBy', 'reviewedBy')
+      .orderBy('request.createdAt', 'DESC');
+
+    if (filters?.status) {
+      query.andWhere('request.status = :status', { status: filters.status });
+    }
+
+    if (filters?.search) {
+      query.andWhere('(user.name ILIKE :search OR user.email ILIKE :search)', {
+        search: `%${filters.search}%`,
+      });
+    }
+
+    const total = await query.getCount();
+    const items = await query.skip((page - 1) * pageSize).take(pageSize).getMany();
+    return { items, total, page, page_size: pageSize };
+  }
+
+  async resolveRoleUpgradeRequest(
+    requestId: string,
+    decision: 'APPROVE' | 'REJECT',
+    adminUser: User,
+    notes?: string,
+  ): Promise<RoleUpgradeRequest> {
+    const request = await this.roleUpgradeRequestRepo.findOne({
+      where: { id: requestId },
+      relations: ['user', 'user.role'],
+    });
+
+    if (!request) throw new NotFoundException('Solicitud no encontrada');
+    if (request.status !== RoleUpgradeRequestStatus.PENDING) {
+      throw new BadRequestException('La solicitud ya fue procesada');
+    }
+
+    if (decision === 'APPROVE') {
+      let teacherRole = await this.roleRepo.findOne({ where: { name: RoleType.DOCENTE } });
+      if (!teacherRole) {
+        teacherRole = this.roleRepo.create({
+          name: RoleType.DOCENTE,
+          description: 'Docente',
+        });
+        teacherRole = await this.roleRepo.save(teacherRole);
+      }
+
+      if (request.user) {
+        request.user.role = teacherRole;
+        await this.userRepo.save(request.user);
+      }
+    }
+
+    request.status =
+      decision === 'APPROVE'
+        ? RoleUpgradeRequestStatus.APPROVED
+        : RoleUpgradeRequestStatus.REJECTED;
+    request.reviewedByUserId = adminUser.id;
+    request.reviewedAt = new Date();
+    request.adminNote = notes?.trim() || null;
+
+    const saved = await this.roleUpgradeRequestRepo.save(request);
+
+    await this.activityService.logActivity(adminUser, ActivityAction.USER_ROLE_CHANGE, {
+      action: decision === 'APPROVE' ? 'ROLE_UPGRADE_APPROVED' : 'ROLE_UPGRADE_REJECTED',
+      requestId: saved.id,
+      targetUserId: saved.user?.id || null,
+      targetUserEmail: saved.user?.email || null,
+      requestedRole: saved.requestedRole,
+    });
+
+    return saved;
+  }
+
+  private isAllowedAssignableRole(rawName: string | null | undefined): boolean {
+    const normalized = this.normalizeRoleName(rawName);
+    return (
+      normalized === RoleType.ADMIN ||
+      normalized === RoleType.DOCENTE ||
+      normalized === RoleType.STUDENT
+    );
+  }
+
+  private normalizeRoleName(rawName: string | null | undefined): CanonicalAssignableRole | null {
+    const role = String(rawName || '').trim().toLowerCase();
+
+    if (role === 'admin') return RoleType.ADMIN;
+    if (role === 'docente' || role === 'professor' || role === 'profesor') return RoleType.DOCENTE;
+    if (
+      role === 'colaborador' ||
+      role === 'estudiante' ||
+      role === 'student' ||
+      role === 'usuario' ||
+      role === 'user'
+    ) {
+      return RoleType.STUDENT;
+    }
+
+    return null;
   }
 }
 

@@ -7,6 +7,8 @@ import { RefreshDto } from '../../application/dto/refresh.dto';
 import { LogoutDto } from '../../application/dto/logout.dto';
 import { StartGoogleOtpDto } from '../../application/dto/start-google-otp.dto';
 import { VerifyGoogleOtpDto } from '../../application/dto/verify-google-otp.dto';
+import { VerifyRegistrationDto } from '../../application/dto/verify-registration.dto';
+import { ResendRegistrationPinDto } from '../../application/dto/resend-registration-pin.dto';
 import { Public } from '../decorators/public.decorator';
 
 @Controller('auth')
@@ -27,6 +29,23 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
+  }
+
+  @Public()
+  @Post('register/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyRegister(@Body() dto: VerifyRegistrationDto, @Req() req: Request) {
+    return this.authService.verifyRegistration(dto, {
+      userAgent: req.headers['user-agent'] || null,
+      ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || null,
+    });
+  }
+
+  @Public()
+  @Post('register/resend')
+  @HttpCode(HttpStatus.OK)
+  resendRegisterPin(@Body() dto: ResendRegistrationPinDto) {
+    return this.authService.resendRegistrationPin(dto);
   }
 
   @Public()

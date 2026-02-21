@@ -10,7 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 
 import { User } from '../../../users/infrastructure/entities/user.entity';
 import { Role } from '../../../roles/infrastructure/entities/role.entity';
@@ -22,7 +22,10 @@ import { RefreshDto } from '../dto/refresh.dto';
 import { LogoutDto } from '../dto/logout.dto';
 import { StartGoogleOtpDto } from '../dto/start-google-otp.dto';
 import { VerifyGoogleOtpDto } from '../dto/verify-google-otp.dto';
+import { VerifyRegistrationDto } from '../dto/verify-registration.dto';
+import { ResendRegistrationPinDto } from '../dto/resend-registration-pin.dto';
 import { EmailOtp } from '../../infrastructure/entities/email-otp.entity';
+import { PendingRegistration } from '../../infrastructure/entities/pending-registration.entity';
 import { MailService } from '../../../mail/application/services/mail.service';
 
 @Injectable()
@@ -36,12 +39,20 @@ export class AuthService {
     private readonly roleRepository: Repository<Role>,
     @InjectRepository(EmailOtp)
     private readonly emailOtpRepo: Repository<EmailOtp>,
+    @InjectRepository(PendingRegistration)
+    private readonly pendingRegistrationRepo: Repository<PendingRegistration>,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
   ) {}
 
   async register(dto: RegisterDto) {
-    const { name, email, password } = dto;
+    const name = String(dto.name || '').trim();
+    const email = String(dto.email || '').trim().toLowerCase();
+    const password = String(dto.password || '').trim();
+
+    if (!name) {
+      throw new BadRequestException('Name is required');
+    }
 
     if (!password || password.length < 6) {
       throw new BadRequestException('Password must be at least 6 characters');
@@ -52,8 +63,111 @@ export class AuthService {
       throw new ConflictException('Email already registered');
     }
 
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const existingPending = await this.pendingRegistrationRepo.findOne({
+      where: {
+        email,
+        consumedAt: IsNull(),
+      } as any,
+      order: { createdAt: 'DESC' as any },
+    });
+
+    const now = Date.now();
+    if (existingPending?.lastSentAt) {
+      const diff = now - existingPending.lastSentAt.getTime();
+      if (diff < 60_000) {
+        throw new HttpException(
+          'Espera un momento antes de solicitar otro codigo',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const verifyCode = String(Math.floor(100000 + Math.random() * 900000));
+    const codeHash = await bcrypt.hash(verifyCode, 10);
+    const tokenHash = createHash('sha256')
+      .update(randomBytes(32).toString('hex'))
+      .digest('hex');
+    const expiresAt = new Date(now + 24 * 60 * 60_000);
+
+    if (existingPending) {
+      const merged = this.pendingRegistrationRepo.merge(existingPending, {
+        name,
+        passwordHash,
+        codeHash,
+        tokenHash,
+        attempts: 0,
+        expiresAt,
+        lastSentAt: new Date(),
+      });
+      await this.pendingRegistrationRepo.save(merged);
+    } else {
+      const created = this.pendingRegistrationRepo.create({
+        email,
+        name,
+        passwordHash,
+        codeHash,
+        tokenHash,
+        expiresAt,
+        consumedAt: null,
+        attempts: 0,
+        lastSentAt: new Date(),
+      } as any);
+      await this.pendingRegistrationRepo.save(created);
+    }
+
+    await this.mailService.sendRegistrationVerificationEmail(
+      email,
+      name,
+      verifyCode,
+    );
+
+    return {
+      success: true,
+      message: 'Revisa tu correo e ingresa el PIN de 6 digitos para activar tu cuenta',
+      expires_in_seconds: 86400,
+    };
+  }
+
+  async verifyRegistration(
+    dto: VerifyRegistrationDto,
+    ctx?: { userAgent?: string | null; ipAddress?: string | null },
+  ) {
+    const email = String(dto.email || '').trim().toLowerCase();
+    const code = String(dto.code || '').trim();
+    const pending = await this.pendingRegistrationRepo.findOne({
+      where: {
+        email,
+        consumedAt: IsNull(),
+      } as any,
+      order: { createdAt: 'DESC' as any },
+    });
+
+    if (!pending) {
+      throw new UnauthorizedException('Codigo invalido');
+    }
+
+    if (pending.expiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException('Codigo expirado');
+    }
+
+    if (pending.attempts >= 5) {
+      throw new UnauthorizedException('Demasiados intentos');
+    }
+
+    const ok = await bcrypt.compare(code, pending.codeHash);
+    if (!ok) {
+      await this.pendingRegistrationRepo.update(
+        { id: pending.id },
+        { attempts: pending.attempts + 1 } as any,
+      );
+      throw new UnauthorizedException('Codigo invalido');
+    }
+
+    const existingUser = await this.userRepository.findOne({ where: { email: pending.email } });
+    if (existingUser) {
+      throw new ConflictException('Este correo ya esta registrado. Inicia sesion.');
+    }
 
     let defaultRole = await this.roleRepository.findOne({
       where: { name: RoleType.STUDENT },
@@ -67,20 +181,89 @@ export class AuthService {
     }
 
     const user = this.userRepository.create({
-      name,
-      email,
-      password: hashedPassword,
+      email: pending.email,
+      name: pending.name,
+      password: pending.passwordHash,
       role: defaultRole,
     });
     await this.userRepository.save(user);
 
-    const result = {
-      id: (user as any).id,
-      email: (user as any).email,
-      name: (user as any).name,
-      role: (user as any).role?.name ? String((user as any).role.name).toLowerCase() : null,
+    await this.pendingRegistrationRepo.update(
+      { id: pending.id },
+      { consumedAt: new Date() } as any,
+    );
+
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role?.name ? String(user.role.name).toLowerCase() : 'usuario',
     };
-    return result;
+
+    const access_token = this.jwtService.sign(payload);
+    const refresh_token = await this.issueRefreshToken(user.id, ctx);
+
+    return {
+      access_token,
+      refresh_token,
+      user: payload,
+    };
+  }
+
+  async resendRegistrationPin(dto: ResendRegistrationPinDto) {
+    const email = String(dto.email || '').trim().toLowerCase();
+    const pending = await this.pendingRegistrationRepo.findOne({
+      where: {
+        email,
+        consumedAt: IsNull(),
+      } as any,
+      order: { createdAt: 'DESC' as any },
+    });
+
+    if (!pending) {
+      throw new BadRequestException(
+        'No existe un registro pendiente para este correo. Primero completa el registro.',
+      );
+    }
+
+    if (pending.expiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException('El PIN de registro ha expirado. Vuelve a registrarte.');
+    }
+
+    const now = Date.now();
+    if (pending.lastSentAt) {
+      const diff = now - pending.lastSentAt.getTime();
+      if (diff < 60_000) {
+        throw new HttpException(
+          'Espera un momento antes de solicitar otro codigo',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
+    const verifyCode = String(Math.floor(100000 + Math.random() * 900000));
+    const codeHash = await bcrypt.hash(verifyCode, 10);
+
+    await this.pendingRegistrationRepo.update(
+      { id: pending.id },
+      {
+        codeHash,
+        attempts: 0,
+        lastSentAt: new Date(),
+      } as any,
+    );
+
+    await this.mailService.sendRegistrationVerificationEmail(
+      pending.email,
+      pending.name,
+      verifyCode,
+    );
+
+    return {
+      success: true,
+      message: 'Te enviamos un nuevo PIN de verificacion a tu correo',
+      cooldown_seconds: 60,
+    };
   }
 
   async login(

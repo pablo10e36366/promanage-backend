@@ -15,8 +15,11 @@ import { ListCoursesUseCase } from '../use-cases/list-courses.use-case';
 import { DeleteCourseUseCase } from '../use-cases/delete-course.use-case';
 import { ListAccessRequestsUseCase } from '../use-cases/list-access-requests.use-case';
 import { ResolveAccessRequestUseCase } from '../use-cases/resolve-access-request.use-case';
+import { ListRoleUpgradeRequestsUseCase } from '../use-cases/list-role-upgrade-requests.use-case';
+import { ResolveRoleUpgradeRequestUseCase } from '../use-cases/resolve-role-upgrade-request.use-case';
 import { ProjectStatus } from '../../../projects/infrastructure/entities/project.entity';
 import { AccessStatus } from '../../../project-access/infrastructure/entities/project-access.entity';
+import { RoleUpgradeRequestStatus } from '../../../users/infrastructure/entities/role-upgrade-request.entity';
 
 @Injectable()
 export class AdminFacadeService {
@@ -33,6 +36,8 @@ export class AdminFacadeService {
     private readonly deleteCourseUseCase: DeleteCourseUseCase,
     private readonly listAccessRequestsUseCase: ListAccessRequestsUseCase,
     private readonly resolveAccessRequestUseCase: ResolveAccessRequestUseCase,
+    private readonly listRoleUpgradeRequestsUseCase: ListRoleUpgradeRequestsUseCase,
+    private readonly resolveRoleUpgradeRequestUseCase: ResolveRoleUpgradeRequestUseCase,
   ) {}
 
   createUser(dto: CreateUserDto, actor: User) {
@@ -98,6 +103,24 @@ export class AdminFacadeService {
     notes?: string,
   ) {
     return this.resolveAccessRequestUseCase.execute(requestId, decision, actor, notes);
+  }
+
+  listRoleUpgradeRequests(filters?: {
+    status?: RoleUpgradeRequestStatus;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  }) {
+    return this.listRoleUpgradeRequestsUseCase.execute(filters);
+  }
+
+  resolveRoleUpgradeRequest(
+    requestId: string,
+    decision: 'APPROVE' | 'REJECT',
+    actor: User,
+    notes?: string,
+  ) {
+    return this.resolveRoleUpgradeRequestUseCase.execute(requestId, decision, actor, notes);
   }
 }
 

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { join } from 'path';
 
 import { validateConfig } from './config';
 
@@ -36,7 +37,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      envFilePath: [join(__dirname, '..', '.env'), '.env'],
       validate: validateConfig,
     }),
 

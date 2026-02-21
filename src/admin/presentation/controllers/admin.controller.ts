@@ -22,6 +22,8 @@ import { AdminFacadeService } from '../../application/services/admin-facade.serv
 import { ProjectStatus } from '../../../projects/infrastructure/entities/project.entity';
 import { AccessStatus } from '../../../project-access/infrastructure/entities/project-access.entity';
 import { ResolveAccessRequestDto } from '../../application/dto/admin-access-request.dto';
+import { ResolveRoleUpgradeRequestDto } from '../../application/dto/admin-role-upgrade-request.dto';
+import { RoleUpgradeRequestStatus } from '../../../users/infrastructure/entities/role-upgrade-request.entity';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -127,6 +129,30 @@ export class AdminController {
     @Req() req: Request & { user: User },
   ) {
     return this.adminFacade.resolveAccessRequest(id, dto.decision, req.user, dto.notes);
+  }
+
+  @Get('role-upgrade-requests')
+  async listRoleUpgradeRequests(
+    @Query('status') status?: RoleUpgradeRequestStatus,
+    @Query('search') search?: string,
+    @Query('page', new ParseIntPipe({ optional: true })) page = 1,
+    @Query('page_size', new ParseIntPipe({ optional: true })) pageSize = 10,
+  ) {
+    return this.adminFacade.listRoleUpgradeRequests({
+      status,
+      search,
+      page,
+      pageSize,
+    });
+  }
+
+  @Patch('role-upgrade-requests/:id')
+  async resolveRoleUpgradeRequest(
+    @Param('id') id: string,
+    @Body() dto: ResolveRoleUpgradeRequestDto,
+    @Req() req: Request & { user: User },
+  ) {
+    return this.adminFacade.resolveRoleUpgradeRequest(id, dto.decision, req.user, dto.notes);
   }
 }
 

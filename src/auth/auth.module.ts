@@ -14,13 +14,14 @@ import { AuthValidationService } from './application/services/auth-validation.se
 import { RefreshToken } from './infrastructure/entities/refresh-token.entity';
 import { Role } from '../roles/infrastructure/entities/role.entity';
 import { EmailOtp } from './infrastructure/entities/email-otp.entity';
+import { PendingRegistration } from './infrastructure/entities/pending-registration.entity';
 
 @Module({
   imports: [
     UsersModule,
     PassportModule,
     MailModule,
-    TypeOrmModule.forFeature([User, RefreshToken, Role, EmailOtp]),
+    TypeOrmModule.forFeature([User, RefreshToken, Role, EmailOtp, PendingRegistration]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
