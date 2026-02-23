@@ -34,6 +34,8 @@ export class MailService {
   // ✅ OTP GOOGLE (YA USANDO RESEND)
   async sendGoogleOtpEmail(email: string, code: string): Promise<void> {
 
+    console.log("🔥 ENTRÓ A sendGoogleOtpEmail", email, code);
+
     const htmlContent = `
       <div style="font-family:Arial;padding:20px">
         <h2>Verifica tu cuenta ProManage</h2>
