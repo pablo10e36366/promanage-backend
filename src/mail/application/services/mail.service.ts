@@ -45,7 +45,7 @@ export class MailService {
     `;
 
     await this.resend.emails.send({
-      from: 'onboarding@resend.dev',
+      from: 'ProManage <no-reply@promanagepro.com>',
       to: email,
       subject: 'Tu código de verificación ProManage',
       html: htmlContent,
